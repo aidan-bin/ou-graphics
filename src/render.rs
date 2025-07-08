@@ -8,8 +8,6 @@ pub const RAY_BIAS: Scalar = 0.000001;
 /// Search window limits for ray intersections
 pub const MIN_SEARCH: Scalar = RAY_BIAS;
 pub const MAX_SEARCH: Scalar = Scalar::INFINITY;
-/// Maximum recursion depth for reflections
-pub const MAX_RECURSIVE_DEPTH: usize = 5;
 
 /// Parametric ray
 #[derive(Default, Copy, Clone)]
@@ -180,9 +178,15 @@ pub trait Render {
 }
 
 /// Gets the color seen by a ray in a scene.
-fn raycolor(scene: &Scene, ray: Ray, search_interval: (Scalar, Scalar), depth: usize) -> Color {
+fn raycolor(
+    scene: &Scene,
+    ray: Ray,
+    search_interval: (Scalar, Scalar),
+    depth: usize,
+    max_depth: usize,
+) -> Color {
     debug_println!("Getting ray color at depth {depth}...");
-    if depth > MAX_RECURSIVE_DEPTH {
+    if depth > max_depth {
         debug_println!("Max recursion depth reached, returning background color");
         return scene.background_color;
     }
@@ -251,10 +255,9 @@ fn raycolor(scene: &Scene, ray: Ray, search_interval: (Scalar, Scalar), depth: u
                 direction: ray.direction
                     - hit_rec.normal * hit_rec.normal.dot(&ray.direction) * 2.0,
             };
-            // Recursive call to mimic reflection off chain of mirrors
             debug_println!("Hit a mirror, reflecting...");
-            color +=
-                material.mirror_color * raycolor(scene, reflect_ray, search_interval, depth + 1);
+            color += material.mirror_color
+                * raycolor(scene, reflect_ray, search_interval, depth + 1, max_depth);
         }
         debug_println!("Color after mirror shading = {color:?}");
         color
@@ -264,7 +267,7 @@ fn raycolor(scene: &Scene, ray: Ray, search_interval: (Scalar, Scalar), depth: u
     }
 }
 
-pub fn render(camera: &Camera, scene: &Scene) -> Image {
+pub fn render(camera: &Camera, scene: &Scene, max_depth: usize) -> Image {
     let x_size = camera.resolution.0;
     let y_size = camera.resolution.1;
     let mut frame = Image::new(x_size, y_size);
@@ -272,9 +275,8 @@ pub fn render(camera: &Camera, scene: &Scene) -> Image {
         for j in 0..y_size {
             debug_println!("Shading pixel ({i},{j})");
             let ray = camera.pixel_to_ray((i, j));
-            // Search whole world (minmax rendering distance)
             let search_interval = (MIN_SEARCH, MAX_SEARCH);
-            frame[[i, j]] = Pixel(raycolor(scene, ray, search_interval, 0));
+            frame[[i, j]] = Pixel(raycolor(scene, ray, search_interval, 0, max_depth));
         }
     }
     frame

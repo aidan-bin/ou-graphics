@@ -1,3 +1,5 @@
+![Rendered Scene Example](assets/example.png)
+
 # ou-graphics
 Simple no-dependencies Rust graphics library with basic linear algebra types, 3D primitives, and rendering tools.
 

@@ -6,8 +6,6 @@ use ou_graphics::types::image::*;
 use ou_graphics::types::linalg::*;
 use piston_window::EventLoop;
 
-const WIDTH: u32 = 720;
-const HEIGHT: u32 = 720;
 const CLEAR_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0]; // White background
 
 fn my_scene() -> Scene {
@@ -47,8 +45,8 @@ fn my_scene() -> Scene {
         },
     );
 
-    let main_light = Light::white(Vector3(16.0, -16.0, 16.0) * 1.2, 0.15);
-    let fill_light = Light::new(Vector3(-10.0, 10.0, 20.0), Color::CYAN * 0.05);
+    let main_light = Light::white(Vector3(0.0, 0.0, 100.0), 0.75);
+    let fill_light = Light::new(Vector3(10.0, 10.0, 0.0), Color::CYAN * 0.15);
 
     Scene::default()
         .with_background(Color::WHITE)
@@ -58,16 +56,6 @@ fn my_scene() -> Scene {
         .with_surface(Box::new(blue_sphere))
         .with_light(main_light)
         .with_light(fill_light)
-}
-
-fn my_camera() -> Camera {
-    Camera::new(
-        Vector3(5.0, 0.0, 0.0),
-        Vector3::ORIGIN, // Point to green sphere
-        Vector3::Z,
-        80.0,
-        (WIDTH as usize, HEIGHT as usize),
-    )
 }
 
 fn print_image_as_text(image: &Image) {
@@ -80,22 +68,141 @@ fn print_image_as_text(image: &Image) {
     }
 }
 
+struct Options {
+    debug_enabled: bool,
+    width: u32,
+    height: u32,
+    camera_distance: f32,
+    fov: f32,
+    ambient: Option<(f32, f32, f32)>,
+    output_path: Option<String>,
+    text_mode: bool,
+    no_window: bool,
+    max_depth: Option<usize>,
+}
+
+impl Options {
+    fn from_args(args: &[String]) -> Self {
+        let mut width = 720;
+        let mut height = 720;
+        let mut camera_distance = 5.0;
+        let mut fov = 80.0;
+        let mut ambient = None;
+        let mut output_path = None;
+        let mut debug_enabled = false;
+        let mut text_mode = false;
+        let mut no_window = false;
+        let mut max_depth = None;
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--debug" => debug_enabled = true,
+                "--text" => text_mode = true,
+                "--no-window" => no_window = true,
+                "--resolution" => {
+                    if i + 1 < args.len() {
+                        if let Some((w, h)) = args[i + 1].split_once('x') {
+                            if let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) {
+                                width = w;
+                                height = h;
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                "--camera-distance" => {
+                    if i + 1 < args.len() {
+                        if let Ok(dist) = args[i + 1].parse::<f32>() {
+                            camera_distance = dist;
+                        }
+                        i += 1;
+                    }
+                }
+                "--fov" => {
+                    if i + 1 < args.len() {
+                        if let Ok(val) = args[i + 1].parse::<f32>() {
+                            fov = val;
+                        }
+                        i += 1;
+                    }
+                }
+                "--ambient" => {
+                    if i + 1 < args.len() {
+                        let parts: Vec<_> = args[i + 1].split(',').collect();
+                        if parts.len() == 3 {
+                            if let (Ok(r), Ok(g), Ok(b)) = (
+                                parts[0].parse::<f32>(),
+                                parts[1].parse::<f32>(),
+                                parts[2].parse::<f32>(),
+                            ) {
+                                ambient = Some((r, g, b));
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                "--output" => {
+                    if i + 1 < args.len() {
+                        output_path = Some(args[i + 1].clone());
+                        i += 1;
+                    }
+                }
+                "--max-depth" => {
+                    if i + 1 < args.len() {
+                        if let Ok(val) = args[i + 1].parse::<usize>() {
+                            max_depth = Some(val);
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        Self {
+            debug_enabled,
+            width,
+            height,
+            camera_distance,
+            fov,
+            ambient,
+            output_path,
+            text_mode,
+            no_window,
+            max_depth,
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let debug_enabled = args.iter().any(|arg| arg == "--debug");
-    set_debug_mode(debug_enabled);
+    let options = Options::from_args(&args);
+    set_debug_mode(options.debug_enabled);
     debug_println!("Debug mode is enabled");
 
-    let scene = my_scene();
-    let camera = my_camera();
-    let frame = render(&camera, &scene);
+    let scene = {
+        let mut scene = my_scene();
+        if let Some((r, g, b)) = options.ambient {
+            scene = scene.with_ambient_light(Color(r, g, b));
+        }
+        scene
+    };
+    let camera = Camera::new(
+        Vector3(options.camera_distance, 0.0, 0.0),
+        Vector3::ORIGIN,
+        Vector3::Z,
+        options.fov,
+        (options.width as usize, options.height as usize),
+    );
+    let max_depth = options.max_depth.unwrap_or(5);
+    let frame = render(&camera, &scene, max_depth);
 
-    if args.iter().any(|arg| arg == "--text") {
+    if options.text_mode {
         print_image_as_text(&frame);
         return;
     }
 
-    let mut frame_buffer = image::ImageBuffer::new(WIDTH, HEIGHT);
+    let mut frame_buffer = image::ImageBuffer::new(options.width, options.height);
     for i in 0..frame.cols() {
         for j in 0..frame.rows() {
             let color = frame[[i, j]].0;
@@ -105,8 +212,18 @@ fn main() {
         }
     }
 
+    if let Some(path) = &options.output_path {
+        frame_buffer.save(path).expect("Failed to save image");
+        println!("Image saved to {path}");
+        return;
+    }
+
+    if options.no_window {
+        return;
+    }
+
     let mut window: piston_window::PistonWindow =
-        piston_window::WindowSettings::new("ou-graphics", [WIDTH, HEIGHT])
+        piston_window::WindowSettings::new("ou-graphics", [options.width, options.height])
             .exit_on_esc(true)
             .build()
             .unwrap_or_else(|_e| panic!("Could not create window!"));
