@@ -1,101 +1,91 @@
-extern crate image;
-extern crate piston_window;
-
-use piston_window::EventLoop;
-
+use ou_graphics::debug::set_debug_mode;
+use ou_graphics::debug_println;
 use ou_graphics::primitives::*;
 use ou_graphics::render::*;
-use ou_graphics::types::*;
+use ou_graphics::types::image::*;
+use ou_graphics::types::linalg::*;
+use piston_window::EventLoop;
 
 const WIDTH: u32 = 720;
 const HEIGHT: u32 = 720;
-
-fn my_sphere() -> Sphere {
-    let green = Color(
-        rgb8_to_colorchannel(64),
-        rgb8_to_colorchannel(255),
-        rgb8_to_colorchannel(64),
-    );
-    let grey = Color(
-        rgb8_to_colorchannel(64),
-        rgb8_to_colorchannel(64),
-        rgb8_to_colorchannel(64),
-    );
-    let material = Material {
-        shininess: 1000.0,
-        diffuse_color: green,
-        specular_color: grey * 4.0,
-        ambient_color: green,
-        mirror_color: grey,
-    };
-    Sphere {
-        center: Vector3(0.0, 0.0, 0.0),
-        radius: 14.0,
-        material,
-    }
-}
-
-fn my_light() -> Light {
-    let white = Color(
-        rgb8_to_colorchannel(255),
-        rgb8_to_colorchannel(255),
-        rgb8_to_colorchannel(255),
-    );
-    Light {
-        position: Vector3(16.0, -16.0, 16.0) * 1.2,
-        //position: Vector3(8.0, 0.0, 8.0),
-        intensity: white * 0.2,
-    }
-}
+const CLEAR_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0]; // White background
 
 fn my_scene() -> Scene {
-    let sphere = my_sphere();
-    //let floor = my_floor();
-    let light = my_light();
-    let dark_grey = Color(
-        rgb8_to_colorchannel(16),
-        rgb8_to_colorchannel(16),
-        rgb8_to_colorchannel(16),
+    let green_sphere = Sphere::new(
+        Vector3::ORIGIN,
+        1.0,
+        Material {
+            shininess: 500.0,
+            diffuse_color: Color::GREEN,
+            specular_color: Color::WHITE * 0.5,
+            ambient_color: Color::GREEN,
+            mirror_color: Color::WHITE * 0.25,
+        },
     );
-    //let almost_black = dark_grey * 0.25;
-    Scene {
-        background_color: dark_grey,
-        surfaces: vec![Box::new(sphere)],
-        //surfaces: vec![],
-        light_sources: vec![light],
-        //light_sources: vec![],
-        ambient_light_intensity: dark_grey * 1.0,
-    }
+
+    let red_sphere = Sphere::new(
+        Vector3(2.0, -0.5, 1.5),
+        0.6,
+        Material {
+            shininess: 300.0,
+            diffuse_color: Color::RED,
+            specular_color: Color::WHITE * 0.6,
+            ambient_color: Color::RED,
+            mirror_color: Color::WHITE * 0.2,
+        },
+    );
+
+    let blue_sphere = Sphere::new(
+        Vector3(2.5, -0.75, -0.75),
+        0.6,
+        Material {
+            shininess: 200.0,
+            diffuse_color: Color::BLUE,
+            specular_color: Color::WHITE * 0.4,
+            ambient_color: Color::BLUE,
+            mirror_color: Color::WHITE * 0.3,
+        },
+    );
+
+    let main_light = Light::white(Vector3(16.0, -16.0, 16.0) * 1.2, 0.15);
+    let fill_light = Light::new(Vector3(-10.0, 10.0, 20.0), Color::CYAN * 0.05);
+
+    Scene::default()
+        .with_background(Color::WHITE)
+        .with_ambient_light(Color::WHITE * 0.3)
+        .with_surface(Box::new(green_sphere))
+        .with_surface(Box::new(red_sphere))
+        .with_surface(Box::new(blue_sphere))
+        .with_light(main_light)
+        .with_light(fill_light)
 }
 
 fn my_camera() -> Camera {
-    let basis = Basis3(
-        Vector3(0.0, 1.0, 0.0),
-        Vector3(0.0, 0.0, 1.0),
-        Vector3(1.0, 0.0, 0.0),
-    );
-    Camera {
-        position: Vector3(14.5, 0.0, 0.0),
-        basis,
-        resolution: (WIDTH as usize, HEIGHT as usize),
-        focal_length: 32.0,
-    }
+    Camera::new(
+        Vector3(5.0, 0.0, 0.0),
+        Vector3::ORIGIN, // Point to green sphere
+        Vector3::Z,
+        80.0,
+        (WIDTH as usize, HEIGHT as usize),
+    )
 }
 
 fn print_image_as_text(image: &Image) {
     for i in 0..image.cols() {
         for j in 0..image.rows() {
             let Color(r, g, b) = image[[i, j]].0;
-            print!("{}", format!("({:3},{:3},{:3})", r, g, b));
+            print!("({r:3},{g:3},{b:3})");
         }
-        println!("");
-        println!("");
-        println!("");
+        println!("\n\n");
     }
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let debug_enabled = args.iter().any(|arg| arg == "--debug");
+    set_debug_mode(debug_enabled);
+    debug_println!("Debug mode is enabled");
+
     let scene = my_scene();
     let camera = my_camera();
     let frame = render(&camera, &scene);
@@ -108,14 +98,15 @@ fn main() {
     let mut frame_buffer = image::ImageBuffer::new(WIDTH, HEIGHT);
     for i in 0..frame.cols() {
         for j in 0..frame.rows() {
-            let Color(r, g, b) = frame[[i, j]].0;
-            let pixel = image::Rgba([(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]);
+            let color = frame[[i, j]].0;
+            let (r, g, b) = color.to_rgb8();
+            let pixel = image::Rgba([r, g, b, 255]);
             frame_buffer.put_pixel(i as u32, j as u32, pixel);
         }
     }
 
     let mut window: piston_window::PistonWindow =
-        piston_window::WindowSettings::new("Raytracer", [WIDTH, HEIGHT])
+        piston_window::WindowSettings::new("ou-graphics", [WIDTH, HEIGHT])
             .exit_on_esc(true)
             .build()
             .unwrap_or_else(|_e| panic!("Could not create window!"));
@@ -131,7 +122,7 @@ fn main() {
 
     while let Some(e) = window.next() {
         window.draw_2d(&e, |c, g, _| {
-            piston_window::clear([1.0; 4], g);
+            piston_window::clear(CLEAR_COLOR, g);
             piston_window::image(&tex, c.transform, g)
         });
     }
