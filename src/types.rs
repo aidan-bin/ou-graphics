@@ -315,8 +315,127 @@ pub mod linalg {
         pub fn iter_mut(&mut self) -> std::slice::IterMut<T> {
             self.array.iter_mut()
         }
-        // TODO: determinant
-        // TODO: product
+
+        /// Returns the determinant of the matrix (only for square matrices of size 2 or 3)
+        pub fn determinant(&self) -> Option<T>
+        where
+            T: Copy
+                + Default
+                + std::ops::Mul<Output = T>
+                + std::ops::Sub<Output = T>
+                + std::ops::Add<Output = T>,
+        {
+            if self.rows != self.cols {
+                return None;
+            }
+            match self.rows {
+                2 => {
+                    // |a b|
+                    // |c d|
+                    let a = self[[0, 0]];
+                    let b = self[[0, 1]];
+                    let c = self[[1, 0]];
+                    let d = self[[1, 1]];
+                    Some(a * d - b * c)
+                }
+                3 => {
+                    // |a b c|
+                    // |d e f|
+                    // |g h i|
+                    let a = self[[0, 0]];
+                    let b = self[[0, 1]];
+                    let c = self[[0, 2]];
+                    let d = self[[1, 0]];
+                    let e = self[[1, 1]];
+                    let f = self[[1, 2]];
+                    let g = self[[2, 0]];
+                    let h = self[[2, 1]];
+                    let i = self[[2, 2]];
+                    Some(a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g))
+                }
+                _ => None, // Not implemented for larger matrices
+            }
+        }
+
+        /// Returns the product of self and another matrix (self * other)
+        pub fn product(&self, other: &Matrix<T>) -> Option<Matrix<T>>
+        where
+            T: Copy + Default + std::ops::Add<Output = T> + std::ops::Mul<Output = T>,
+        {
+            if self.cols != other.rows {
+                return None;
+            }
+            let mut result = Matrix::new(self.rows, other.cols);
+            for i in 0..self.rows {
+                for j in 0..other.cols {
+                    let mut sum = T::default();
+                    for k in 0..self.cols {
+                        sum = sum + self[[i, k]] * other[[k, j]];
+                    }
+                    result[[i, j]] = sum;
+                }
+            }
+            Some(result)
+        }
+
+        /// Returns the inverse of the matrix (only for square matrices of size 2 or 3)
+        pub fn inverse(&self) -> Option<Matrix<T>>
+        where
+            T: Copy
+                + Default
+                + std::ops::Mul<Output = T>
+                + std::ops::Sub<Output = T>
+                + std::ops::Add<Output = T>
+                + std::ops::Div<Output = T>
+                + std::ops::Neg<Output = T>
+                + PartialEq
+                + From<f32>,
+        {
+            let det = self.determinant()?;
+            if det == T::from(0.0) {
+                return None;
+            }
+            match self.rows {
+                2 => {
+                    // |a b|
+                    // |c d|
+                    let a = self[[0, 0]];
+                    let b = self[[0, 1]];
+                    let c = self[[1, 0]];
+                    let d = self[[1, 1]];
+                    let mut inv = Self::new(2, 2);
+                    inv[[0, 0]] = d / det;
+                    inv[[0, 1]] = -b / det;
+                    inv[[1, 0]] = -c / det;
+                    inv[[1, 1]] = a / det;
+                    Some(inv)
+                }
+                3 => {
+                    // Adjugate method
+                    let a = self[[0, 0]];
+                    let b = self[[0, 1]];
+                    let c = self[[0, 2]];
+                    let d = self[[1, 0]];
+                    let e = self[[1, 1]];
+                    let f = self[[1, 2]];
+                    let g = self[[2, 0]];
+                    let h = self[[2, 1]];
+                    let i = self[[2, 2]];
+                    let mut inv = Self::new(3, 3);
+                    inv[[0, 0]] = (e * i - f * h) / det;
+                    inv[[0, 1]] = -(b * i - c * h) / det;
+                    inv[[0, 2]] = (b * f - c * e) / det;
+                    inv[[1, 0]] = -(d * i - f * g) / det;
+                    inv[[1, 1]] = (a * i - c * g) / det;
+                    inv[[1, 2]] = -(a * f - c * d) / det;
+                    inv[[2, 0]] = (d * h - e * g) / det;
+                    inv[[2, 1]] = -(a * h - b * g) / det;
+                    inv[[2, 2]] = (a * e - b * d) / det;
+                    Some(inv)
+                }
+                _ => None,
+            }
+        }
     }
 
     impl<T> std::ops::Index<[usize; 2]> for Matrix<T> {
@@ -584,6 +703,74 @@ mod tests {
         assert_eq!(v2.dot(&v1), expected);
     }
 
+    /// Matrix and product tests
+    #[test]
+    fn matrix_determinant_2x2() {
+        let mut m = Matrix::new(2, 2);
+        m[[0, 0]] = 1.0;
+        m[[0, 1]] = 2.0;
+        m[[1, 0]] = 3.0;
+        m[[1, 1]] = 4.0;
+        assert_eq!(m.determinant(), Some(-2.0));
+    }
+
+    #[test]
+    fn matrix_determinant_3x3() {
+        let mut m = Matrix::new(3, 3);
+        m[[0, 0]] = 6.0;
+        m[[0, 1]] = 1.0;
+        m[[0, 2]] = 1.0;
+        m[[1, 0]] = 4.0;
+        m[[1, 1]] = -2.0;
+        m[[1, 2]] = 5.0;
+        m[[2, 0]] = 2.0;
+        m[[2, 1]] = 8.0;
+        m[[2, 2]] = 7.0;
+        assert_eq!(m.determinant(), Some(-306.0));
+    }
+
+    #[test]
+    fn matrix_product_2x2() {
+        let mut a = Matrix::new(2, 2);
+        a[[0, 0]] = 1.0;
+        a[[0, 1]] = 2.0;
+        a[[1, 0]] = 3.0;
+        a[[1, 1]] = 4.0;
+        let mut b = Matrix::new(2, 2);
+        b[[0, 0]] = 2.0;
+        b[[0, 1]] = 0.0;
+        b[[1, 0]] = 1.0;
+        b[[1, 1]] = 2.0;
+        let prod = a.product(&b).unwrap();
+        assert_eq!(prod[[0, 0]], 4.0);
+        assert_eq!(prod[[0, 1]], 4.0);
+        assert_eq!(prod[[1, 0]], 10.0);
+        assert_eq!(prod[[1, 1]], 8.0);
+    }
+
+    #[test]
+    fn matrix_product_2x3_3x2() {
+        let mut a = Matrix::new(2, 3);
+        a[[0, 0]] = 1.0;
+        a[[0, 1]] = 2.0;
+        a[[0, 2]] = 3.0;
+        a[[1, 0]] = 4.0;
+        a[[1, 1]] = 5.0;
+        a[[1, 2]] = 6.0;
+        let mut b = Matrix::new(3, 2);
+        b[[0, 0]] = 7.0;
+        b[[0, 1]] = 8.0;
+        b[[1, 0]] = 9.0;
+        b[[1, 1]] = 10.0;
+        b[[2, 0]] = 11.0;
+        b[[2, 1]] = 12.0;
+        let prod = a.product(&b).unwrap();
+        assert_eq!(prod[[0, 0]], 58.0);
+        assert_eq!(prod[[0, 1]], 64.0);
+        assert_eq!(prod[[1, 0]], 139.0);
+        assert_eq!(prod[[1, 1]], 154.0);
+    }
+
     /// Image and color tests
     #[test]
     fn colorchannel_saturation() {
@@ -646,6 +833,76 @@ mod tests {
                         0.5,
                     ))
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn matrix_inverse_2x2() {
+        let mut m = Matrix::new(2, 2);
+        m[[0, 0]] = 4.0;
+        m[[0, 1]] = 7.0;
+        m[[1, 0]] = 2.0;
+        m[[1, 1]] = 6.0;
+        let inv = m.inverse().unwrap();
+        let mut expected = Matrix::new(2, 2);
+        expected[[0, 0]] = 0.6;
+        expected[[0, 1]] = -0.7;
+        expected[[1, 0]] = -0.2;
+        expected[[1, 1]] = 0.4;
+        for i in 0..2 {
+            for j in 0..2 {
+                assert!((inv[[i, j]] as f32 - expected[[i, j]] as f32).abs() < 1e-6);
+            }
+        }
+        let prod = m.product(&inv).unwrap();
+        for i in 0..2 {
+            for j in 0..2 {
+                if i == j {
+                    assert!((prod[[i, j]] as f32 - 1.0).abs() < 1e-5);
+                } else {
+                    assert!((prod[[i, j]] as f32).abs() < 1e-5);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn matrix_inverse_3x3() {
+        let mut m = Matrix::new(3, 3);
+        m[[0, 0]] = 1.0;
+        m[[0, 1]] = 2.0;
+        m[[0, 2]] = 3.0;
+        m[[1, 0]] = 0.0;
+        m[[1, 1]] = 1.0;
+        m[[1, 2]] = 4.0;
+        m[[2, 0]] = 5.0;
+        m[[2, 1]] = 6.0;
+        m[[2, 2]] = 0.0;
+        let inv = m.inverse().unwrap();
+        let mut expected = Matrix::new(3, 3);
+        expected[[0, 0]] = -24.0;
+        expected[[0, 1]] = 18.0;
+        expected[[0, 2]] = 5.0;
+        expected[[1, 0]] = 20.0;
+        expected[[1, 1]] = -15.0;
+        expected[[1, 2]] = -4.0;
+        expected[[2, 0]] = -5.0;
+        expected[[2, 1]] = 4.0;
+        expected[[2, 2]] = 1.0;
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!((inv[[i, j]] as f32 - expected[[i, j]] as f32).abs() < 1e-6);
+            }
+        }
+        let prod = m.product(&inv).unwrap();
+        for i in 0..3 {
+            for j in 0..3 {
+                if i == j {
+                    assert!((prod[[i, j]] as f32 - 1.0).abs() < 1e-5);
+                } else {
+                    assert!((prod[[i, j]] as f32).abs() < 1e-5);
+                }
             }
         }
     }

@@ -139,6 +139,123 @@ impl Sphere {
     }
 }
 
+/// Infinite plane defined by a point and normal
+pub struct Plane {
+    pub point: Vector3,
+    pub normal: Vector3,
+    pub material: Material,
+}
+
+impl Plane {
+    /// Create a new plane
+    pub fn new(point: Vector3, normal: Vector3, material: Material) -> Self {
+        Self {
+            point,
+            normal: normal.normalized(),
+            material,
+        }
+    }
+}
+
+impl Surface for Plane {
+    fn normal(&self, _point: Vector3) -> Vector3 {
+        self.normal
+    }
+
+    fn material(&self) -> Material {
+        self.material
+    }
+}
+
+impl Render for Plane {
+    fn hit(&self, ray: Ray, search_interval: (Scalar, Scalar), hit_rec: &mut HitRecord) -> bool {
+        let normal_dot_direction = self.normal.dot(&ray.direction);
+
+        // Check if ray is parallel to plane
+        if normal_dot_direction.abs() < f32::EPSILON {
+            return false;
+        }
+
+        let t = (self.point - ray.position).dot(&self.normal) / normal_dot_direction;
+
+        if t < search_interval.0 || t >= search_interval.1 {
+            return false;
+        }
+
+        hit_rec.t = t;
+        hit_rec.normal = self.normal;
+        hit_rec.material = self.material();
+        true
+    }
+}
+
+/// Convex polygon defined by a list of vertices (in order)
+pub struct Polygon {
+    pub vertices: Vec<Vector3>,
+    pub normal: Vector3,
+    pub material: Material,
+}
+
+impl Polygon {
+    /// Create a new convex polygon from vertices (must be coplanar and ordered)
+    pub fn new(vertices: Vec<Vector3>, material: Material) -> Self {
+        assert!(vertices.len() >= 3, "Polygon must have at least 3 vertices");
+        // Compute normal from first three vertices
+        let normal = (vertices[1] - vertices[0])
+            .cross(&(vertices[2] - vertices[0]))
+            .normalized();
+        Self {
+            vertices,
+            normal,
+            material,
+        }
+    }
+}
+
+impl Surface for Polygon {
+    fn normal(&self, _point: Vector3) -> Vector3 {
+        self.normal
+    }
+    fn material(&self) -> Material {
+        self.material
+    }
+}
+
+impl Render for Polygon {
+    fn hit(&self, ray: Ray, search_interval: (Scalar, Scalar), hit_rec: &mut HitRecord) -> bool {
+        // Ray-plane intersection
+        let normal_dot_dir = self.normal.dot(&ray.direction);
+        if normal_dot_dir.abs() < f32::EPSILON {
+            return false;
+        }
+        let t = (self.vertices[0] - ray.position).dot(&self.normal) / normal_dot_dir;
+        if t < search_interval.0 || t >= search_interval.1 {
+            return false;
+        }
+        let p = ray.position + ray.direction * t;
+        // Inside-out test for convex polygon
+        let n = self.normal;
+        let mut inside = true;
+        for i in 0..self.vertices.len() {
+            let v0 = self.vertices[i];
+            let v1 = self.vertices[(i + 1) % self.vertices.len()];
+            let edge = v1 - v0;
+            let vp = p - v0;
+            if edge.cross(&vp).dot(&n) < 0.0 {
+                inside = false;
+                break;
+            }
+        }
+        if !inside {
+            return false;
+        }
+        hit_rec.t = t;
+        hit_rec.normal = self.normal;
+        hit_rec.material = self.material();
+        true
+    }
+}
+
 impl Default for Scene {
     fn default() -> Self {
         Self {
@@ -210,59 +327,3 @@ impl Scene {
         self
     }
 }
-
-/// Infinite plane defined by a point and normal
-pub struct Plane {
-    pub point: Vector3,
-    pub normal: Vector3,
-    pub material: Material,
-}
-
-impl Plane {
-    /// Create a new plane
-    pub fn new(point: Vector3, normal: Vector3, material: Material) -> Self {
-        Self {
-            point,
-            normal: normal.normalized(),
-            material,
-        }
-    }
-}
-
-impl Surface for Plane {
-    fn normal(&self, _point: Vector3) -> Vector3 {
-        self.normal
-    }
-
-    fn material(&self) -> Material {
-        self.material
-    }
-}
-
-impl Render for Plane {
-    fn hit(&self, ray: Ray, search_interval: (Scalar, Scalar), hit_rec: &mut HitRecord) -> bool {
-        let normal_dot_direction = self.normal.dot(&ray.direction);
-
-        // Check if ray is parallel to plane
-        if normal_dot_direction.abs() < f32::EPSILON {
-            return false;
-        }
-
-        let t = (self.point - ray.position).dot(&self.normal) / normal_dot_direction;
-
-        if t < search_interval.0 || t >= search_interval.1 {
-            return false;
-        }
-
-        hit_rec.t = t;
-        hit_rec.normal = self.normal;
-        hit_rec.material = self.material();
-        true
-    }
-}
-
-// TODO: pub struct Polygon
-
-// TODO: impl Surface for Polygon
-
-// TODO: impl Render for Polygon

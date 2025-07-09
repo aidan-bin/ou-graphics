@@ -1,14 +1,14 @@
-use ou_graphics::debug::set_debug_mode;
-use ou_graphics::debug_println;
+use ou_graphics::debug::{set_debug_mode, set_verbose_mode};
 use ou_graphics::primitives::*;
 use ou_graphics::render::*;
 use ou_graphics::types::image::*;
 use ou_graphics::types::linalg::*;
+use ou_graphics::{debug_println, verbose_println};
 use piston_window::EventLoop;
 
 const CLEAR_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0]; // White background
 
-fn my_scene() -> Scene {
+fn spheres_scene() -> Scene {
     let green_sphere = Sphere::new(
         Vector3::ORIGIN,
         1.0,
@@ -58,6 +58,28 @@ fn my_scene() -> Scene {
         .with_light(fill_light)
 }
 
+fn polygon_scene() -> Scene {
+    let vertices = vec![
+        Vector3(0.0, 1.0, 0.0),
+        Vector3(0.0, -1.0, -1.0),
+        Vector3(0.0, -1.0, 1.0),
+    ];
+    let material = Material {
+        shininess: 500.0,
+        diffuse_color: Color::GREEN,
+        specular_color: Color::WHITE * 0.5,
+        ambient_color: Color::GREEN,
+        mirror_color: Color::WHITE * 0.25,
+    };
+    let polygon = Polygon::new(vertices, material);
+    let light = Light::white(Vector3(100.0, 0.0, 0.0), 0.8);
+    Scene::default()
+        .with_background(Color::WHITE)
+        .with_ambient_light(Color::WHITE * 0.2)
+        .with_surface(Box::new(polygon))
+        .with_light(light)
+}
+
 fn print_image_as_text(image: &Image) {
     for i in 0..image.cols() {
         for j in 0..image.rows() {
@@ -70,6 +92,7 @@ fn print_image_as_text(image: &Image) {
 
 struct Options {
     debug_enabled: bool,
+    verbose_enabled: bool,
     width: u32,
     height: u32,
     camera_distance: f32,
@@ -79,6 +102,7 @@ struct Options {
     text_mode: bool,
     no_window: bool,
     max_depth: Option<usize>,
+    scene: String,
 }
 
 impl Options {
@@ -90,13 +114,16 @@ impl Options {
         let mut ambient = None;
         let mut output_path = None;
         let mut debug_enabled = false;
+        let mut verbose_enabled = false;
         let mut text_mode = false;
         let mut no_window = false;
         let mut max_depth = None;
+        let mut scene = "spheres".to_string();
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
                 "--debug" => debug_enabled = true,
+                "--verbose" => verbose_enabled = true,
                 "--text" => text_mode = true,
                 "--no-window" => no_window = true,
                 "--resolution" => {
@@ -155,12 +182,19 @@ impl Options {
                         i += 1;
                     }
                 }
+                "--scene" => {
+                    if i + 1 < args.len() {
+                        scene = args[i + 1].clone();
+                        i += 1;
+                    }
+                }
                 _ => {}
             }
             i += 1;
         }
         Self {
             debug_enabled,
+            verbose_enabled,
             width,
             height,
             camera_distance,
@@ -170,6 +204,7 @@ impl Options {
             text_mode,
             no_window,
             max_depth,
+            scene,
         }
     }
 }
@@ -178,10 +213,19 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let options = Options::from_args(&args);
     set_debug_mode(options.debug_enabled);
+    set_verbose_mode(options.verbose_enabled);
     debug_println!("Debug mode is enabled");
+    verbose_println!("Verbose mode is enabled");
 
     let scene = {
-        let mut scene = my_scene();
+        let mut scene = match options.scene.as_str() {
+            "polygon" => polygon_scene(),
+            "spheres" => spheres_scene(),
+            other => {
+                eprintln!("Error: unrecognized scene '{other}'.");
+                std::process::exit(1);
+            }
+        };
         if let Some((r, g, b)) = options.ambient {
             scene = scene.with_ambient_light(Color(r, g, b));
         }

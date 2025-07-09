@@ -1,7 +1,7 @@
-use crate::debug_println;
 use crate::primitives::*;
 use crate::types::image::*;
 use crate::types::linalg::*;
+use crate::verbose_println;
 
 /// Small positive bias to avoid surface self-intersection artifacts
 pub const RAY_BIAS: Scalar = 0.000001;
@@ -42,7 +42,7 @@ impl Camera {
 
         let image_plane_width = 1.0;
         let focal_length = (image_plane_width / 2.0) / (fov.to_radians() / 2.0).tan();
-        debug_println!(
+        verbose_println!(
             "Creating camera at {position:?} looking at {target:?} with up {up:?}, fov {fov}, resolution {resolution:?}, focal length {focal_length}",
         );
 
@@ -185,9 +185,9 @@ fn raycolor(
     depth: usize,
     max_depth: usize,
 ) -> Color {
-    debug_println!("Getting ray color at depth {depth}...");
+    verbose_println!("Getting ray color at depth {depth}...");
     if depth > max_depth {
-        debug_println!("Max recursion depth reached, returning background color");
+        verbose_println!("Max recursion depth reached, returning background color");
         return scene.background_color;
     }
 
@@ -195,7 +195,7 @@ fn raycolor(
     let mut shadow_rec = HitRecord::default();
     if scene.hit(ray, search_interval, &mut hit_rec) {
         let p_intersect = ray.position + (ray.direction * hit_rec.t);
-        debug_println!(
+        verbose_println!(
             "Ray hit a surface at {p_intersect:?} with n = {normal:?}! Shading...",
             normal = hit_rec.normal
         );
@@ -203,20 +203,20 @@ fn raycolor(
 
         // Add base color due to ambient lighting
         let mut color = material.ambient_color * scene.ambient_light_intensity;
-        debug_println!("Color initial (just ambient lighting) = {color:?}");
+        verbose_println!("Color initial (just ambient lighting) = {color:?}");
         for (light_idx, light) in scene.light_sources.iter().enumerate() {
-            debug_println!("Adding light {light_idx}...");
+            verbose_println!("Adding light {light_idx}...");
             let light_direction = light.position - p_intersect;
             let light_distance = light_direction.len();
             let light_direction_normalized = light_direction.normalized();
 
-            debug_println!("Light direction = {light_direction:?}");
-            debug_println!("Normal direction = {normal:?}", normal = hit_rec.normal);
+            verbose_println!("Light direction = {light_direction:?}");
+            verbose_println!("Normal direction = {normal:?}", normal = hit_rec.normal);
 
             // Early exit if light is behind surface
             let n_dot_l = hit_rec.normal.dot(&light_direction_normalized);
             if n_dot_l <= 0.0 {
-                debug_println!("Light is behind surface, skipping...");
+                verbose_println!("Light is behind surface, skipping...");
                 continue;
             }
 
@@ -227,11 +227,11 @@ fn raycolor(
 
             let shadow_interval = (RAY_BIAS, light_distance - RAY_BIAS);
             if !scene.hit(shadow_ray, shadow_interval, &mut shadow_rec) {
-                debug_println!("Point is NOT in shadow relative to this light, shading...");
+                verbose_println!("Point is NOT in shadow relative to this light, shading...");
 
                 // Lambertian (diffuse) shading
                 color += material.diffuse_color * light.intensity * n_dot_l;
-                debug_println!("Color after Lambertian shading = {color:?}");
+                verbose_println!("Color after Lambertian shading = {color:?}");
 
                 // Blinn-Phong (specular) shading
                 let view_direction = ray.direction.normalized() * -1.0;
@@ -242,9 +242,9 @@ fn raycolor(
                         * light.intensity
                         * n_dot_h.powf(material.shininess);
                 }
-                debug_println!("Color after Blinn-Phong shading = {color:?}");
+                verbose_println!("Color after Blinn-Phong shading = {color:?}");
             } else {
-                debug_println!("Point IS in shadow relative to this light, not shading");
+                verbose_println!("Point IS in shadow relative to this light, not shading");
             }
         }
 
@@ -255,14 +255,14 @@ fn raycolor(
                 direction: ray.direction
                     - hit_rec.normal * hit_rec.normal.dot(&ray.direction) * 2.0,
             };
-            debug_println!("Hit a mirror, reflecting...");
+            verbose_println!("Hit a mirror, reflecting...");
             color += material.mirror_color
                 * raycolor(scene, reflect_ray, search_interval, depth + 1, max_depth);
         }
-        debug_println!("Color after mirror shading = {color:?}");
+        verbose_println!("Color after mirror shading = {color:?}");
         color
     } else {
-        debug_println!("Hit nothing, setting to background color...");
+        verbose_println!("Hit nothing, setting to background color...");
         scene.background_color
     }
 }
@@ -273,7 +273,7 @@ pub fn render(camera: &Camera, scene: &Scene, max_depth: usize) -> Image {
     let mut frame = Image::new(x_size, y_size);
     for i in 0..x_size {
         for j in 0..y_size {
-            debug_println!("Shading pixel ({i},{j})");
+            verbose_println!("Shading pixel ({i},{j})");
             let ray = camera.pixel_to_ray((i, j));
             let search_interval = (MIN_SEARCH, MAX_SEARCH);
             frame[[i, j]] = Pixel(raycolor(scene, ray, search_interval, 0, max_depth));
