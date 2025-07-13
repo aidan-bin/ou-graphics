@@ -1,3 +1,4 @@
+use crate::debug::is_verbose_enabled;
 use crate::primitives::*;
 use crate::types::image::*;
 use crate::types::linalg::*;
@@ -5,7 +6,7 @@ use crate::verbose_println;
 
 /// Small positive bias to avoid surface self-intersection artifacts
 pub const RAY_BIAS: Scalar = 0.000001;
-/// Search window limits for ray intersections
+// Search window limits for ray intersections
 pub const MIN_SEARCH: Scalar = RAY_BIAS;
 pub const MAX_SEARCH: Scalar = Scalar::INFINITY;
 
@@ -16,19 +17,20 @@ pub struct Ray {
     pub direction: Vector3,
 }
 
+/// Represents a camera in 3D space
+#[derive(Default, Copy, Clone)]
 pub struct Camera {
     pub position: Vector3,
-    /// Orthonormal right-handed camera space basis {u, v, w} where -w is the view direction
+    /// Orthonormal right-handed camera space basis (u, v, w) where -w is the view direction
     pub basis: Basis3,
     /// Pixel resolution as (horizontal, vertical)
-    /// Note: Both dimensions assumed to be even.
+    /// Note: Both dimensions must be even
     pub resolution: (usize, usize),
     /// Euclidean distance from camera origin to image plane
     pub focal_length: Scalar,
 }
 
 impl Camera {
-    /// Create a new camera looking at a target point
     pub fn new(
         position: Vector3,
         target: Vector3,
@@ -36,6 +38,11 @@ impl Camera {
         fov: Scalar,
         resolution: (usize, usize),
     ) -> Self {
+        assert!(
+            resolution.0 % 2 == 0 && resolution.1 % 2 == 0,
+            "Resolution must be even"
+        );
+
         let w = (position - target).normalized(); // Camera looks down -w
         let u = up.cross(&w).normalized(); // Right vector
         let v = w.cross(&u); // Up vector (already normalized)
@@ -58,8 +65,8 @@ impl Camera {
         self.basis.2 * -1.0
     }
 
-    /// Takes pixel coordinates and returns coordinates in {u, v} basis of camera space
-    /// The (0, 0) pixel is in the top-left corner.
+    /// Takes pixel coordinates and returns coordinates in (u, v) basis of camera space
+    /// Note: The (0, 0) pixel is in the top-left corner
     pub fn pixel_to_camera_space(&self, pixel_idx: (usize, usize)) -> Vector2 {
         let x_size = self.resolution.0 as Scalar;
         let y_size = self.resolution.1 as Scalar;
@@ -77,7 +84,7 @@ impl Camera {
         Vector2(u, v)
     }
 
-    /// Returns view ray for given pixel coordinates.
+    /// Returns view ray for given pixel coordinates
     pub fn pixel_to_ray(&self, pixel_idx: (usize, usize)) -> Ray {
         let Vector2(u, v) = self.pixel_to_camera_space((pixel_idx.0, pixel_idx.1));
         let view_vec = self.view_direction();
@@ -92,23 +99,27 @@ impl Camera {
     }
 }
 
-/// Struct modeling apparent properties of a surface
+/// Represents properties of a surface for rendering
 #[derive(Default, Copy, Clone)]
 pub struct Material {
-    pub shininess: Scalar, // 10 = matte, 100 = mildly shiny, 1000 = really glossy, 10000 = mirror
-    /// Surface color
-    pub diffuse_color: Color, // Main color of the material when it is lit by direct light
-    pub specular_color: Color, // Color of the shiny highlights that appear on the material when it reflects light sources
-    pub ambient_color: Color, // Color of the material under ambient (indirect) light, representing how it looks in shadow or low light
-    pub mirror_color: Color, // Color of the light reflected by the material as if it were a mirror; used to simulate mirror-like reflections
+    /// Shading shininess factor; non-linear:
+    /// 10 = matte, 100 = mildly shiny, 1000 = really glossy, 10000 = mirror
+    pub shininess: Scalar,
+    /// Main color of the material when it is lit by direct light
+    pub diffuse_color: Color,
+    /// Color of the shiny highlights on the material when it reflects direct light
+    pub specular_color: Color,
+    /// Color of the material when it is lit by ambient (indirect) light
+    pub ambient_color: Color,
+    /// Represents the strength/tint of reflections off the material; Color::BLACK means no reflections
+    pub mirror_color: Color,
 }
 
 impl Material {
-    /// Create a new material with all properties
     pub fn new(
+        shininess: Scalar,
         diffuse_color: Color,
         specular_color: Color,
-        shininess: Scalar,
         ambient_color: Color,
         mirror_color: Color,
     ) -> Self {
@@ -121,29 +132,31 @@ impl Material {
         }
     }
 
-    /// Create a simple matte material
+    /// Create a simple matte material with color
+    /// Note: Matte materials have no specular highlights and low shininess
     pub fn matte(color: Color) -> Self {
         Self {
             shininess: 10.0,
             diffuse_color: color,
             specular_color: Color::BLACK,
-            ambient_color: color * 0.2,
+            ambient_color: color,
             mirror_color: Color::BLACK,
         }
     }
 
-    /// Create a shiny material
-    pub fn shiny(color: Color, shininess: Scalar) -> Self {
+    /// Create a shiny material with color
+    pub fn shiny(color: Color) -> Self {
         Self {
-            shininess,
+            shininess: 100.0,
             diffuse_color: color,
             specular_color: Color::WHITE * 0.3,
-            ambient_color: color * 0.1,
-            mirror_color: Color::BLACK,
+            ambient_color: color,
+            mirror_color: color * 0.1,
         }
     }
 
-    /// Create a mirror material
+    /// Create a mirror material with scalar reflectance [0.0, 1.0]
+    /// Note: Mirror materials have very high shininess and no diffuse/ambient color
     pub fn mirror(reflectance: Scalar) -> Self {
         let mirror_color = Color::WHITE * reflectance;
         Self {
@@ -157,16 +170,15 @@ impl Material {
 }
 
 /// Stores rendering data about ray-surface intersection
-/// Note: Generally only valid when a surface is hit
 #[derive(Default)]
 pub struct HitRecord {
     /// The surface hit
-    //pub surface: &dyn Surface,
+    // pub surface: &dyn Surface,
     /// Ray t value of intersection
     pub t: Scalar,
     /// Surface normal at intersection point
     pub normal: Vector3,
-    /// Material for the surface intersected
+    /// Material of the surface intersected
     pub material: Material,
 }
 
@@ -177,7 +189,7 @@ pub trait Render {
     fn hit(&self, ray: Ray, search_interval: (Scalar, Scalar), hit_rec: &mut HitRecord) -> bool;
 }
 
-/// Gets the color seen by a ray in a scene.
+/// Gets the color seen by a ray in a scene
 fn raycolor(
     scene: &Scene,
     ray: Ray,
@@ -205,7 +217,10 @@ fn raycolor(
         let mut color = material.ambient_color * scene.ambient_light_intensity;
         verbose_println!("Color initial (just ambient lighting) = {color:?}");
         for (light_idx, light) in scene.light_sources.iter().enumerate() {
-            verbose_println!("Adding light {light_idx}...");
+            verbose_println!(
+                "Adding light {light_idx} at position {light_pos:?}...",
+                light_pos = light.position
+            );
             let light_direction = light.position - p_intersect;
             let light_distance = light_direction.len();
             let light_direction_normalized = light_direction.normalized();
@@ -225,6 +240,7 @@ fn raycolor(
                 direction: light_direction_normalized,
             };
 
+            // Check if point is shadowed from this light
             let shadow_interval = (RAY_BIAS, light_distance - RAY_BIAS);
             if !scene.hit(shadow_ray, shadow_interval, &mut shadow_rec) {
                 verbose_println!("Point is NOT in shadow relative to this light, shading...");
@@ -276,7 +292,15 @@ pub fn render(camera: &Camera, scene: &Scene, max_depth: usize) -> Image {
             verbose_println!("Shading pixel ({i},{j})");
             let ray = camera.pixel_to_ray((i, j));
             let search_interval = (MIN_SEARCH, MAX_SEARCH);
-            frame[[i, j]] = Pixel(raycolor(scene, ray, search_interval, 0, max_depth));
+            let color = raycolor(scene, ray, search_interval, 0, max_depth);
+            if is_verbose_enabled() {
+                let (r8, g8, b8) = color.to_rgb8();
+                let (sr8, sg8, sb8) = color.to_srgb8();
+                println!(
+                    "Final pixel ({i},{j}) color: {color:?}, rgb8=({r8},{g8},{b8}), srgb8=({sr8},{sg8},{sb8})",
+                );
+            }
+            frame[[i, j]] = Pixel(color);
         }
     }
     frame

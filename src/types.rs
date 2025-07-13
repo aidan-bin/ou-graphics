@@ -109,7 +109,6 @@ pub mod linalg {
         }
     }
 
-    // Add division by scalar
     impl std::ops::Div<Scalar> for Vector2 {
         type Output = Self;
         #[inline]
@@ -316,7 +315,8 @@ pub mod linalg {
             self.array.iter_mut()
         }
 
-        /// Returns the determinant of the matrix (only for square matrices of size 2 or 3)
+        /// Returns the determinant of the matrix
+        /// Note: Only for square matrices of size 2 or 3
         pub fn determinant(&self) -> Option<T>
         where
             T: Copy
@@ -357,7 +357,6 @@ pub mod linalg {
             }
         }
 
-        /// Returns the product of self and another matrix (self * other)
         pub fn product(&self, other: &Matrix<T>) -> Option<Matrix<T>>
         where
             T: Copy + Default + std::ops::Add<Output = T> + std::ops::Mul<Output = T>,
@@ -378,7 +377,8 @@ pub mod linalg {
             Some(result)
         }
 
-        /// Returns the inverse of the matrix (only for square matrices of size 2 or 3)
+        /// Returns the inverse of the matrix
+        /// Note: Only for square matrices of size 2 or 3
         pub fn inverse(&self) -> Option<Matrix<T>>
         where
             T: Copy
@@ -492,21 +492,22 @@ pub mod linalg {
         }
     }
 
-    /// Parametric equations. Returns a point as a vector.
+    /// Parametric equation that returns a 3D point given one parameter
     pub type ParametricEq1 = fn(Scalar) -> Vector3;
+    /// Parametric equation that returns a 3D point given two parameters
     pub type ParametricEq2 = fn(Scalar, Scalar) -> Vector3;
 
-    /// Implicit equation. Returns whether point satisfies equation.
+    /// Implicit equation that returns true if a point is on the surface
     pub type ImplicitEq<T> = fn(T) -> bool;
 }
 
 pub mod image {
     use super::linalg::Matrix;
     use super::linalg::Scalar;
-    /// Color channel in range [0,1]
+    /// Color channel in range [0.0, 1.0]
     pub type ColorChannel = f32;
 
-    /// Saturates value to within range [0,1]
+    /// Saturates value to within range [0.0, 1.0]
     #[inline]
     pub fn saturate_to_range(color: ColorChannel) -> ColorChannel {
         color.clamp(0.0, 1.0)
@@ -518,7 +519,19 @@ pub mod image {
         saturate_to_range((color as ColorChannel) / 255.0)
     }
 
-    /// RGB color
+    /// Converts ColorChannel to sRGB8 channel
+    #[inline]
+    pub fn colorchannel_to_srgb8(color: ColorChannel) -> u8 {
+        let c = saturate_to_range(color);
+        let srgb = if c <= 0.0031308 {
+            12.92 * c
+        } else {
+            1.055 * c.powf(1.0 / 2.4) - 0.055
+        };
+        (srgb * 255.0).round() as u8
+    }
+
+    /// Linear RGB color
     #[derive(Default, Copy, Clone, Debug, PartialEq)]
     pub struct Color(pub ColorChannel, pub ColorChannel, pub ColorChannel);
 
@@ -598,7 +611,7 @@ pub mod image {
         pub const LIGHT_GRAY: Color = Color(0.75, 0.75, 0.75);
         pub const DARK_GRAY: Color = Color(0.25, 0.25, 0.25);
 
-        /// Create a color from RGB values in the range [0, 255]
+        /// Create a Color from RGB values in the range [0, 255]
         #[inline]
         pub fn from_rgb8(r: u8, g: u8, b: u8) -> Self {
             Color(
@@ -612,13 +625,23 @@ pub mod image {
         #[inline]
         pub fn to_rgb8(self) -> (u8, u8, u8) {
             (
-                (self.0 * 255.0) as u8,
-                (self.1 * 255.0) as u8,
-                (self.2 * 255.0) as u8,
+                (self.0 * 255.0).round() as u8,
+                (self.1 * 255.0).round() as u8,
+                (self.2 * 255.0).round() as u8,
             )
         }
 
-        /// Linear interpolation between two colors
+        /// Convert to sRGB8 tuple
+        #[inline]
+        pub fn to_srgb8(self) -> (u8, u8, u8) {
+            (
+                colorchannel_to_srgb8(self.0),
+                colorchannel_to_srgb8(self.1),
+                colorchannel_to_srgb8(self.2),
+            )
+        }
+
+        /// Linear interpolation between two colors with percentage of other
         #[inline]
         pub fn lerp(self, other: Color, t: ColorChannel) -> Color {
             self * (1.0 - t) + other * t
@@ -637,7 +660,7 @@ mod tests {
     use super::image::*;
     use super::linalg::*;
 
-    /// Vector tests
+    // Vector tests
     #[test]
     fn vector2_add() {
         let v1 = Vector2(1.0, 2.0);
@@ -703,7 +726,7 @@ mod tests {
         assert_eq!(v2.dot(&v1), expected);
     }
 
-    /// Matrix and product tests
+    // Matrix tests
     #[test]
     fn matrix_determinant_2x2() {
         let mut m = Matrix::new(2, 2);
@@ -771,7 +794,7 @@ mod tests {
         assert_eq!(prod[[1, 1]], 154.0);
     }
 
-    /// Image and color tests
+    // Image and color tests
     #[test]
     fn colorchannel_saturation() {
         assert_eq!(saturate_to_range(-0.5), 0.0);
@@ -806,6 +829,20 @@ mod tests {
 
         assert_eq!(red * green, green * red);
         assert_eq!(white * gray, gray * white);
+    }
+
+    #[test]
+    fn color_to_rgb8_rounds() {
+        let c = Color(0.5, 0.5, 0.5);
+        assert_eq!(c.to_rgb8(), (128, 128, 128));
+        let c = Color(0.499, 0.499, 0.499);
+        assert_eq!(c.to_rgb8(), (127, 127, 127));
+        let c = Color(0.501, 0.501, 0.501);
+        assert_eq!(c.to_rgb8(), (128, 128, 128));
+        let c = Color(1.0, 1.0, 1.0);
+        assert_eq!(c.to_rgb8(), (255, 255, 255));
+        let c = Color(0.0, 0.0, 0.0);
+        assert_eq!(c.to_rgb8(), (0, 0, 0));
     }
 
     #[test]

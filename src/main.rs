@@ -4,9 +4,7 @@ use ou_graphics::render::*;
 use ou_graphics::types::image::*;
 use ou_graphics::types::linalg::*;
 use ou_graphics::{debug_println, verbose_println};
-use piston_window::EventLoop;
-
-const CLEAR_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0]; // White background
+use std::time::Instant;
 
 fn spheres_scene() -> Scene {
     let green_sphere = Sphere::new(
@@ -80,6 +78,53 @@ fn polygon_scene() -> Scene {
         .with_light(light)
 }
 
+fn mirror_ball_scene() -> Scene {
+    let ground = Plane::new(
+        Vector3(0.0, 0.0, -1.0),
+        Vector3::Z,
+        Material::shiny(Color::WHITE * 0.7),
+    );
+
+    let mirror_ball = Sphere::new(
+        Vector3(0.0, 0.0, 0.0),
+        1.0,
+        Material::new(
+            1000.0,
+            Color::BLACK,
+            Color::WHITE,
+            Color::WHITE * 0.2, // Slightly opaque
+            Color::WHITE,       // Full mirror
+        ),
+    );
+
+    let small_balls = vec![
+        Sphere::new(Vector3(2.0, 1.5, -0.5), 0.5, Material::shiny(Color::RED)),
+        Sphere::new(Vector3(-2.0, -2.0, -0.7), 0.3, Material::shiny(Color::BLUE)),
+        Sphere::new(Vector3(1.5, -1.5, -0.8), 0.2, Material::shiny(Color::GREEN)),
+        Sphere::new(Vector3(0.8, 2.0, -0.9), 0.3, Material::shiny(Color::CYAN)),
+        Sphere::new(
+            Vector3(-1.2, 1.2, -0.6),
+            0.4,
+            Material::shiny(Color::YELLOW),
+        ),
+    ];
+
+    let sky_color = Color(0.4, 0.7, 1.0) * 0.8;
+    let ambient_light = Color::WHITE * 0.3;
+    let sun_light = Light::white(Vector3(10.0, 10.0, 20.0), 1.0);
+
+    let mut scene = Scene::default()
+        .with_background(sky_color)
+        .with_ambient_light(ambient_light)
+        .with_surface(Box::new(ground))
+        .with_surface(Box::new(mirror_ball))
+        .with_light(sun_light);
+    for ball in small_balls {
+        scene.add_surface(Box::new(ball));
+    }
+    scene
+}
+
 fn print_image_as_text(image: &Image) {
     for i in 0..image.cols() {
         for j in 0..image.rows() {
@@ -93,32 +138,36 @@ fn print_image_as_text(image: &Image) {
 struct Options {
     debug_enabled: bool,
     verbose_enabled: bool,
-    width: u32,
-    height: u32,
+    render_width: u32,
+    render_height: u32,
+    display_width: u32,
+    display_height: u32,
     camera_distance: f32,
     fov: f32,
-    ambient: Option<(f32, f32, f32)>,
     output_path: Option<String>,
     text_mode: bool,
     no_window: bool,
     max_depth: Option<usize>,
     scene: String,
+    single_pixel: Option<(u32, u32)>,
 }
 
 impl Options {
     fn from_args(args: &[String]) -> Self {
-        let mut width = 720;
-        let mut height = 720;
+        let mut render_width = 4000;
+        let mut render_height = 4000;
+        let mut display_width = 720;
+        let mut display_height = 720;
         let mut camera_distance = 5.0;
         let mut fov = 80.0;
-        let mut ambient = None;
         let mut output_path = None;
         let mut debug_enabled = false;
         let mut verbose_enabled = false;
         let mut text_mode = false;
         let mut no_window = false;
         let mut max_depth = None;
-        let mut scene = "spheres".to_string();
+        let mut scene = "mirror_ball".to_string();
+        let mut single_pixel = None;
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
@@ -130,8 +179,19 @@ impl Options {
                     if i + 1 < args.len() {
                         if let Some((w, h)) = args[i + 1].split_once('x') {
                             if let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) {
-                                width = w;
-                                height = h;
+                                render_width = w;
+                                render_height = h;
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                "--display" => {
+                    if i + 1 < args.len() {
+                        if let Some((w, h)) = args[i + 1].split_once('x') {
+                            if let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) {
+                                display_width = w;
+                                display_height = h;
                             }
                         }
                         i += 1;
@@ -149,21 +209,6 @@ impl Options {
                     if i + 1 < args.len() {
                         if let Ok(val) = args[i + 1].parse::<f32>() {
                             fov = val;
-                        }
-                        i += 1;
-                    }
-                }
-                "--ambient" => {
-                    if i + 1 < args.len() {
-                        let parts: Vec<_> = args[i + 1].split(',').collect();
-                        if parts.len() == 3 {
-                            if let (Ok(r), Ok(g), Ok(b)) = (
-                                parts[0].parse::<f32>(),
-                                parts[1].parse::<f32>(),
-                                parts[2].parse::<f32>(),
-                            ) {
-                                ambient = Some((r, g, b));
-                            }
                         }
                         i += 1;
                     }
@@ -188,6 +233,16 @@ impl Options {
                         i += 1;
                     }
                 }
+                "--single-pixel" => {
+                    if i + 1 < args.len() {
+                        if let Some((x, y)) = args[i + 1].split_once(',') {
+                            if let (Ok(x), Ok(y)) = (x.parse::<u32>(), y.parse::<u32>()) {
+                                single_pixel = Some((x, y));
+                            }
+                        }
+                        i += 1;
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -195,16 +250,18 @@ impl Options {
         Self {
             debug_enabled,
             verbose_enabled,
-            width,
-            height,
+            render_width,
+            render_height,
+            display_width,
+            display_height,
             camera_distance,
             fov,
-            ambient,
             output_path,
             text_mode,
             no_window,
             max_depth,
             scene,
+            single_pixel,
         }
     }
 }
@@ -217,42 +274,67 @@ fn main() {
     debug_println!("Debug mode is enabled");
     verbose_println!("Verbose mode is enabled");
 
-    let scene = {
-        let mut scene = match options.scene.as_str() {
-            "polygon" => polygon_scene(),
-            "spheres" => spheres_scene(),
-            other => {
-                eprintln!("Error: unrecognized scene '{other}'.");
-                std::process::exit(1);
-            }
-        };
-        if let Some((r, g, b)) = options.ambient {
-            scene = scene.with_ambient_light(Color(r, g, b));
+    let render_aspect = options.render_width as f32 / options.render_height as f32;
+    let display_aspect = options.display_width as f32 / options.display_height as f32;
+    if (render_aspect - display_aspect).abs() > 0.01 {
+        eprintln!(
+            "Warning: Render aspect ratio ({render_aspect:.3}) and display aspect ratio ({display_aspect:.3}) differ. Image may appear stretched or squashed."
+        );
+    }
+
+    let scene = match options.scene.as_str() {
+        "polygon" => polygon_scene(),
+        "spheres" => spheres_scene(),
+        "mirror_ball" => mirror_ball_scene(),
+        other => {
+            eprintln!("Error: unrecognized scene '{other}'.");
+            std::process::exit(1);
         }
-        scene
     };
     let camera = Camera::new(
         Vector3(options.camera_distance, 0.0, 0.0),
         Vector3::ORIGIN,
         Vector3::Z,
         options.fov,
-        (options.width as usize, options.height as usize),
+        (
+            options.render_width as usize,
+            options.render_height as usize,
+        ),
     );
     let max_depth = options.max_depth.unwrap_or(5);
+    let start = Instant::now();
     let frame = render(&camera, &scene, max_depth);
+    let duration = start.elapsed();
+    debug_println!("Render took {:.2?}", duration);
 
     if options.text_mode {
         print_image_as_text(&frame);
         return;
     }
 
-    let mut frame_buffer = image::ImageBuffer::new(options.width, options.height);
+    let mut frame_buffer = image::ImageBuffer::new(options.render_width, options.render_height);
     for i in 0..frame.cols() {
         for j in 0..frame.rows() {
             let color = frame[[i, j]].0;
-            let (r, g, b) = color.to_rgb8();
+            let (r, g, b) = color.to_srgb8();
             let pixel = image::Rgba([r, g, b, 255]);
             frame_buffer.put_pixel(i as u32, j as u32, pixel);
+        }
+    }
+
+    // Single pixel mode: fill the frame_buffer with the color of the selected pixel
+    if let Some((px, py)) = options.single_pixel {
+        if px < options.render_width && py < options.render_height {
+            let color = frame[[px as usize, py as usize]].0;
+            let (r, g, b) = color.to_srgb8();
+            let pixel = image::Rgba([r, g, b, 255]);
+            for i in 0..options.render_width {
+                for j in 0..options.render_height {
+                    frame_buffer.put_pixel(i, j, pixel);
+                }
+            }
+        } else {
+            eprintln!("Warning: --single-pixel coordinates out of bounds");
         }
     }
 
@@ -266,25 +348,23 @@ fn main() {
         return;
     }
 
-    let mut window: piston_window::PistonWindow =
-        piston_window::WindowSettings::new("ou-graphics", [options.width, options.height])
-            .exit_on_esc(true)
-            .build()
-            .unwrap_or_else(|_e| panic!("Could not create window!"));
+    let display_buffer = if options.display_width != options.render_width
+        || options.display_height != options.render_height
+    {
+        image::imageops::resize(
+            &frame_buffer,
+            options.display_width,
+            options.display_height,
+            image::imageops::FilterType::Lanczos3,
+        )
+    } else {
+        frame_buffer
+    };
 
-    let tex = piston_window::Texture::from_image(
-        &mut window.create_texture_context(),
-        &frame_buffer,
-        &piston_window::TextureSettings::new(),
-    )
-    .unwrap();
-
-    window.set_lazy(true);
-
-    while let Some(e) = window.next() {
-        window.draw_2d(&e, |c, g, _| {
-            piston_window::clear(CLEAR_COLOR, g);
-            piston_window::image(&tex, c.transform, g)
-        });
-    }
+    // Save to a temporary file and open with default viewer
+    let tmp_path = std::env::temp_dir().join("ou-graphics-preview.png");
+    display_buffer
+        .save(&tmp_path)
+        .expect("Failed to save temp image");
+    open::that(&tmp_path).expect("Failed to open image in default viewer");
 }

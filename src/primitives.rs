@@ -1,4 +1,3 @@
-/// Primitives for constructing a 3D scene
 use crate::render::*;
 use crate::types::image::*;
 use crate::types::linalg::*;
@@ -7,14 +6,15 @@ use crate::types::linalg::*;
 pub struct Scene {
     pub background_color: Color,
     pub surfaces: Vec<Box<dyn Surface>>,
-    /// Light sources themselves are not visible
+    /// Note: Light sources themselves are not visible
     pub light_sources: Vec<Light>,
-    /// RGB intensity
+    /// RGB intensity of the ambient light in the scene (a base level of illumination)
+    /// Note: This requires the material to have an ambient_color to have an effect
     pub ambient_light_intensity: Color,
 }
 
 impl Render for Scene {
-    /// Checks scene for intersection, returns closest hit
+    /// Updates hit record with closest intersection; returns true if a surface was hit
     fn hit(&self, ray: Ray, search_interval: (Scalar, Scalar), hit_rec: &mut HitRecord) -> bool {
         let mut closest_hit = false;
         let mut closest_t = search_interval.1; // Start with far limit
@@ -25,7 +25,7 @@ impl Render for Scene {
                 && temp_hit_rec.t < closest_t
             {
                 closest_t = temp_hit_rec.t;
-                *hit_rec = temp_hit_rec; // Copy the closest hit
+                *hit_rec = temp_hit_rec;
                 closest_hit = true;
             }
         }
@@ -40,7 +40,7 @@ pub struct Light {
 }
 
 impl Light {
-    /// Create a new point light
+    /// Create a new point light with RGB intensity
     pub fn new(position: Vector3, intensity: Color) -> Self {
         Self {
             position,
@@ -48,7 +48,7 @@ impl Light {
         }
     }
 
-    /// Create a white light with given intensity
+    /// Create a white light with scalar intensity [0.0, 1.0]
     pub fn white(position: Vector3, intensity: Scalar) -> Self {
         Self {
             position,
@@ -69,9 +69,9 @@ impl Light {
 
 /// Trait for defining entity structure
 pub trait Surface: Render {
-    /// Returns (unit) normal vector of surface at point
+    /// Returns unit normal vector of surface at point
     fn normal(&self, point: Vector3) -> Vector3;
-    /// Returns material properties of surface
+    /// Returns the material properties of the surface (used for shading)
     fn material(&self) -> Material;
 }
 
@@ -82,8 +82,8 @@ pub struct Sphere {
 }
 
 impl Surface for Sphere {
-    /// Gives surface normal at a point.
-    /// Assumes point is on surface.
+    /// Gives surface normal at a point
+    /// Note: Assumes point is on surface
     fn normal(&self, point: Vector3) -> Vector3 {
         (point - self.center) * (1.0 / self.radius)
     }
@@ -98,7 +98,7 @@ impl Render for Sphere {
         let eye_to_center = ray.position - self.center;
 
         // Quadratic equation coefficients: at^2 + bt + c = 0
-        let a = ray.direction.dot(&ray.direction); // Should be 1.0 for normalized rays
+        let a = ray.direction.dot(&ray.direction); // Note: Should be 1.0 for normalized rays
         let b = 2.0 * eye_to_center.dot(&ray.direction);
         let c = eye_to_center.dot(&eye_to_center) - self.radius * self.radius;
 
@@ -129,7 +129,6 @@ impl Render for Sphere {
 }
 
 impl Sphere {
-    /// Create a new sphere
     pub fn new(center: Vector3, radius: Scalar, material: Material) -> Self {
         Self {
             center,
@@ -147,7 +146,6 @@ pub struct Plane {
 }
 
 impl Plane {
-    /// Create a new plane
     pub fn new(point: Vector3, normal: Vector3, material: Material) -> Self {
         Self {
             point,
@@ -262,7 +260,7 @@ impl Default for Scene {
             background_color: Color::BLACK,
             surfaces: Vec::new(),
             light_sources: Vec::new(),
-            ambient_light_intensity: Color(0.1, 0.1, 0.1), // Soft ambient light
+            ambient_light_intensity: Color::BLACK,
         }
     }
 }
@@ -273,55 +271,37 @@ impl Scene {
         Self::default()
     }
 
-    /// Create a new scene with custom settings
-    pub fn with_settings(background_color: Color, ambient_light_intensity: Color) -> Self {
-        Self {
-            background_color,
-            surfaces: Vec::new(),
-            light_sources: Vec::new(),
-            ambient_light_intensity,
-        }
-    }
-
-    /// Add a surface to the scene
     pub fn add_surface(&mut self, surface: Box<dyn Surface>) {
         self.surfaces.push(surface);
     }
 
-    /// Add a light to the scene
     pub fn add_light(&mut self, light: Light) {
         self.light_sources.push(light);
     }
 
-    /// Set background color
     pub fn set_background(&mut self, color: Color) {
         self.background_color = color;
     }
 
-    /// Set ambient light intensity
     pub fn set_ambient_light(&mut self, intensity: Color) {
         self.ambient_light_intensity = intensity;
     }
 
-    /// Builder-style method to set background color
     pub fn with_background(mut self, color: Color) -> Self {
         self.background_color = color;
         self
     }
 
-    /// Builder-style method to set ambient light
     pub fn with_ambient_light(mut self, intensity: Color) -> Self {
         self.ambient_light_intensity = intensity;
         self
     }
 
-    /// Builder-style method to add a surface
     pub fn with_surface(mut self, surface: Box<dyn Surface>) -> Self {
         self.surfaces.push(surface);
         self
     }
 
-    /// Builder-style method to add a light
     pub fn with_light(mut self, light: Light) -> Self {
         self.light_sources.push(light);
         self

@@ -5,12 +5,10 @@ thread_local! {
     static VERBOSE_MODE: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Set debug mode on or off.
 pub fn set_debug_mode(enabled: bool) {
     DEBUG_MODE.with(|flag| flag.set(enabled));
 }
 
-/// Set verbose mode on or off.
 pub fn set_verbose_mode(enabled: bool) {
     VERBOSE_MODE.with(|flag| flag.set(enabled));
 }
