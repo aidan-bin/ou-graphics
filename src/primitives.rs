@@ -33,6 +33,18 @@ impl Render for Scene {
     }
 }
 
+impl Clone for Scene {
+    fn clone(&self) -> Self {
+        Scene {
+            background_color: self.background_color,
+            surfaces: self.surfaces.iter().map(|s| s.box_clone()).collect(),
+            light_sources: self.light_sources.clone(),
+            ambient_light_intensity: self.ambient_light_intensity,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Light {
     pub position: Vector3,
     /// RGB intensity
@@ -68,13 +80,15 @@ impl Light {
 }
 
 /// Trait for defining entity structure
-pub trait Surface: Render {
+pub trait Surface: Render + Send + Sync {
     /// Returns unit normal vector of surface at point
     fn normal(&self, point: Vector3) -> Vector3;
     /// Returns the material properties of the surface (used for shading)
     fn material(&self) -> Material;
+    fn box_clone(&self) -> Box<dyn Surface>;
 }
 
+#[derive(Clone)]
 pub struct Sphere {
     pub center: Vector3,
     pub radius: Scalar,
@@ -90,6 +104,10 @@ impl Surface for Sphere {
 
     fn material(&self) -> Material {
         self.material
+    }
+
+    fn box_clone(&self) -> Box<dyn Surface> {
+        Box::new(self.clone())
     }
 }
 
@@ -139,6 +157,7 @@ impl Sphere {
 }
 
 /// Infinite plane defined by a point and normal
+#[derive(Clone)]
 pub struct Plane {
     pub point: Vector3,
     pub normal: Vector3,
@@ -162,6 +181,10 @@ impl Surface for Plane {
 
     fn material(&self) -> Material {
         self.material
+    }
+
+    fn box_clone(&self) -> Box<dyn Surface> {
+        Box::new(self.clone())
     }
 }
 
@@ -188,6 +211,7 @@ impl Render for Plane {
 }
 
 /// Convex polygon defined by a list of vertices (in order)
+#[derive(Clone)]
 pub struct Polygon {
     pub vertices: Vec<Vector3>,
     pub normal: Vector3,
@@ -216,6 +240,10 @@ impl Surface for Polygon {
     }
     fn material(&self) -> Material {
         self.material
+    }
+
+    fn box_clone(&self) -> Box<dyn Surface> {
+        Box::new(self.clone())
     }
 }
 

@@ -283,24 +283,66 @@ fn raycolor(
     }
 }
 
-pub fn render(camera: &Camera, scene: &Scene, max_depth: usize) -> Image {
-    let x_size = camera.resolution.0;
-    let y_size = camera.resolution.1;
-    let mut frame = Image::new(x_size, y_size);
-    for i in 0..x_size {
-        for j in 0..y_size {
-            verbose_println!("Shading pixel ({i},{j})");
-            let ray = camera.pixel_to_ray((i, j));
-            let search_interval = (MIN_SEARCH, MAX_SEARCH);
-            let color = raycolor(scene, ray, search_interval, 0, max_depth);
+/// Renders a range of rows for the image, returning a vector of (row index, pixel row)
+fn render_rows(
+    camera: Camera,
+    scene: Scene,
+    max_depth: usize,
+    width: usize,
+    row_range: std::ops::Range<usize>,
+) -> Vec<(usize, Vec<Pixel>)> {
+    let mut rows = Vec::new();
+    for y in row_range {
+        let mut row = Vec::with_capacity(width);
+        for x in 0..width {
+            verbose_println!("Shading pixel ({x},{y})");
+            let ray = camera.pixel_to_ray((x, y));
+            let color = raycolor(&scene, ray, (MIN_SEARCH, MAX_SEARCH), 0, max_depth);
             if is_verbose_enabled() {
                 let (r8, g8, b8) = color.to_rgb8();
                 let (sr8, sg8, sb8) = color.to_srgb8();
                 println!(
-                    "Final pixel ({i},{j}) color: {color:?}, rgb8=({r8},{g8},{b8}), srgb8=({sr8},{sg8},{sb8})",
+                    "Final pixel ({x},{y}) color: {color:?}, rgb8=({r8},{g8},{b8}), srgb8=({sr8},{sg8},{sb8})",
                 );
             }
-            frame[[i, j]] = Pixel(color);
+            row.push(Pixel(color));
+        }
+        rows.push((y, row));
+    }
+    rows
+}
+
+/// Renders an image from a camera and scene, optionally using multiple threads
+/// Note: If `num_threads` > 1, rendering is divided into bands of rows, each processed in a separate thread
+pub fn render(camera: &Camera, scene: &Scene, max_depth: usize, num_threads: usize) -> Image {
+    let (width, height) = camera.resolution;
+    let mut frame = Image::new(width, height);
+    if num_threads <= 1 {
+        for (y, row) in render_rows(*camera, scene.clone(), max_depth, width, 0..height) {
+            for (x, pixel) in row.into_iter().enumerate() {
+                frame[[x, y]] = pixel;
+            }
+        }
+    } else {
+        #[allow(clippy::manual_div_ceil)]
+        let rows_per_thread = (height + num_threads - 1) / num_threads;
+        let mut handles = Vec::new();
+        for thread_id in 0..num_threads {
+            let start_row = thread_id * rows_per_thread;
+            let end_row = ((thread_id + 1) * rows_per_thread).min(height);
+            let camera = *camera;
+            let scene = scene.clone();
+            let handle = std::thread::spawn(move || {
+                render_rows(camera, scene, max_depth, width, start_row..end_row)
+            });
+            handles.push(handle);
+        }
+        for handle in handles {
+            for (y, row) in handle.join().unwrap() {
+                for (x, pixel) in row.into_iter().enumerate() {
+                    frame[[x, y]] = pixel;
+                }
+            }
         }
     }
     frame

@@ -150,6 +150,7 @@ struct Options {
     max_depth: Option<usize>,
     scene: String,
     single_pixel: Option<(u32, u32)>,
+    threads: usize,
 }
 
 impl Options {
@@ -168,6 +169,7 @@ impl Options {
         let mut max_depth = None;
         let mut scene = "mirror_ball".to_string();
         let mut single_pixel = None;
+        let mut threads = 8;
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
@@ -243,6 +245,14 @@ impl Options {
                         i += 1;
                     }
                 }
+                "--threads" => {
+                    if i + 1 < args.len() {
+                        if let Ok(val) = args[i + 1].parse::<usize>() {
+                            threads = val.max(1);
+                        }
+                        i += 1;
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -262,6 +272,7 @@ impl Options {
             max_depth,
             scene,
             single_pixel,
+            threads,
         }
     }
 }
@@ -303,7 +314,7 @@ fn main() {
     );
     let max_depth = options.max_depth.unwrap_or(5);
     let start = Instant::now();
-    let frame = render(&camera, &scene, max_depth);
+    let frame = render(&camera, &scene, max_depth, options.threads);
     let duration = start.elapsed();
     debug_println!("Render took {:.2?}", duration);
 
