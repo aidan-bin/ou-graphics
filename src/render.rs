@@ -67,7 +67,8 @@ impl Camera {
 
     /// Takes pixel coordinates and returns coordinates in (u, v) basis of camera space
     /// Note: The (0, 0) pixel is in the top-left corner
-    pub fn pixel_to_camera_space(&self, pixel_idx: (usize, usize)) -> Vector2 {
+    /// Note: Fractional pixel coordinates are supported for subpixel sampling
+    pub fn pixel_to_camera_space(&self, pixel_idx: (Scalar, Scalar)) -> Vector2 {
         let x_size = self.resolution.0 as Scalar;
         let y_size = self.resolution.1 as Scalar;
         let aspect_ratio = x_size / y_size;
@@ -79,13 +80,14 @@ impl Camera {
         let t = 0.5;
         let b = -0.5;
 
-        let u = l + (r - l) * (i as Scalar + 0.5) / x_size;
-        let v = t + (b - t) * (j as Scalar + 0.5) / y_size;
+        let u = l + (r - l) * (i + 0.5) / x_size;
+        let v = t + (b - t) * (j + 0.5) / y_size;
         Vector2(u, v)
     }
 
     /// Returns view ray for given pixel coordinates
-    pub fn pixel_to_ray(&self, pixel_idx: (usize, usize)) -> Ray {
+    /// Note: Fractional pixel coordinates are supported for subpixel sampling
+    pub fn pixel_to_ray(&self, pixel_idx: (Scalar, Scalar)) -> Ray {
         let Vector2(u, v) = self.pixel_to_camera_space((pixel_idx.0, pixel_idx.1));
         let view_vec = self.view_direction();
         let u_vec = self.basis.0;
@@ -283,6 +285,41 @@ fn raycolor(
     }
 }
 
+fn shade_pixel(
+    x: usize,
+    y: usize,
+    camera: &Camera,
+    scene: &Scene,
+    max_depth: usize,
+    samples_per_pixel: usize,
+    rng: &mut impl rand::Rng,
+) -> Pixel {
+    verbose_println!("Shading pixel ({x},{y})");
+    let mut color = Color::BLACK;
+    if samples_per_pixel == 1 {
+        // Deterministic single sample per pixel
+        let ray = camera.pixel_to_ray((x as Scalar, y as Scalar));
+        color = raycolor(scene, ray, (MIN_SEARCH, MAX_SEARCH), 0, max_depth);
+    } else {
+        // Sample randomly within the pixel for anti-aliasing
+        for _ in 0..samples_per_pixel {
+            let dx: Scalar = rng.gen::<Scalar>() - 0.5;
+            let dy: Scalar = rng.gen::<Scalar>() - 0.5;
+            let ray = camera.pixel_to_ray((x as Scalar + dx, y as Scalar + dy));
+            color += raycolor(scene, ray, (MIN_SEARCH, MAX_SEARCH), 0, max_depth)
+                * (1.0 / samples_per_pixel as Scalar);
+        }
+    }
+    if is_verbose_enabled() {
+        let (r8, g8, b8) = color.to_rgb8();
+        let (sr8, sg8, sb8) = color.to_srgb8();
+        println!(
+            "Final pixel ({x},{y}) color: {color:?}, rgb8=({r8},{g8},{b8}), srgb8=({sr8},{sg8},{sb8})",
+        );
+    }
+    Pixel(color)
+}
+
 /// Renders a range of rows for the image, returning a vector of (row index, pixel row)
 fn render_rows(
     camera: Camera,
@@ -290,22 +327,22 @@ fn render_rows(
     max_depth: usize,
     width: usize,
     row_range: std::ops::Range<usize>,
+    samples_per_pixel: usize,
 ) -> Vec<(usize, Vec<Pixel>)> {
     let mut rows = Vec::new();
+    let mut rng = rand::thread_rng();
     for y in row_range {
         let mut row = Vec::with_capacity(width);
         for x in 0..width {
-            verbose_println!("Shading pixel ({x},{y})");
-            let ray = camera.pixel_to_ray((x, y));
-            let color = raycolor(&scene, ray, (MIN_SEARCH, MAX_SEARCH), 0, max_depth);
-            if is_verbose_enabled() {
-                let (r8, g8, b8) = color.to_rgb8();
-                let (sr8, sg8, sb8) = color.to_srgb8();
-                println!(
-                    "Final pixel ({x},{y}) color: {color:?}, rgb8=({r8},{g8},{b8}), srgb8=({sr8},{sg8},{sb8})",
-                );
-            }
-            row.push(Pixel(color));
+            row.push(shade_pixel(
+                x,
+                y,
+                &camera,
+                &scene,
+                max_depth,
+                samples_per_pixel,
+                &mut rng,
+            ));
         }
         rows.push((y, row));
     }
@@ -314,11 +351,24 @@ fn render_rows(
 
 /// Renders an image from a camera and scene, optionally using multiple threads
 /// Note: If `num_threads` > 1, rendering is divided into bands of rows, each processed in a separate thread
-pub fn render(camera: &Camera, scene: &Scene, max_depth: usize, num_threads: usize) -> Image {
+pub fn render(
+    camera: &Camera,
+    scene: &Scene,
+    max_depth: usize,
+    num_threads: usize,
+    samples_per_pixel: usize,
+) -> Image {
     let (width, height) = camera.resolution;
     let mut frame = Image::new(width, height);
     if num_threads <= 1 {
-        for (y, row) in render_rows(*camera, scene.clone(), max_depth, width, 0..height) {
+        for (y, row) in render_rows(
+            *camera,
+            scene.clone(),
+            max_depth,
+            width,
+            0..height,
+            samples_per_pixel,
+        ) {
             for (x, pixel) in row.into_iter().enumerate() {
                 frame[[x, y]] = pixel;
             }
@@ -333,7 +383,14 @@ pub fn render(camera: &Camera, scene: &Scene, max_depth: usize, num_threads: usi
             let camera = *camera;
             let scene = scene.clone();
             let handle = std::thread::spawn(move || {
-                render_rows(camera, scene, max_depth, width, start_row..end_row)
+                render_rows(
+                    camera,
+                    scene,
+                    max_depth,
+                    width,
+                    start_row..end_row,
+                    samples_per_pixel,
+                )
             });
             handles.push(handle);
         }
@@ -376,19 +433,20 @@ mod tests {
             focal_length: 8.0,
         };
         // Top-left
-        let Vector2(u, v) = camera.pixel_to_camera_space((0, 0));
+        let Vector2(u, v) = camera.pixel_to_camera_space((0.0, 0.0));
         assert!((u - (l + (r - l) * 0.5 / x_size as Scalar)).abs() < 1e-10);
         assert!((v - (t + (b - t) * 0.5 / y_size as Scalar)).abs() < 1e-10);
         // Top-right
-        let Vector2(u, v) = camera.pixel_to_camera_space((x_size - 1, 0));
+        let Vector2(u, v) = camera.pixel_to_camera_space(((x_size as Scalar - 1.0), 0.0));
         assert!((u - (l + (r - l) * (x_size as Scalar - 0.5) / x_size as Scalar)).abs() < 1e-10);
         assert!((v - (t + (b - t) * 0.5 / y_size as Scalar)).abs() < 1e-10);
         // Bottom-left
-        let Vector2(u, v) = camera.pixel_to_camera_space((0, y_size - 1));
+        let Vector2(u, v) = camera.pixel_to_camera_space((0.0, y_size as Scalar - 1.0));
         assert!((u - (l + (r - l) * 0.5 / x_size as Scalar)).abs() < 1e-10);
         assert!((v - (t + (b - t) * (y_size as Scalar - 0.5) / y_size as Scalar)).abs() < 1e-10);
         // Bottom-right
-        let Vector2(u, v) = camera.pixel_to_camera_space((x_size - 1, y_size - 1));
+        let Vector2(u, v) =
+            camera.pixel_to_camera_space(((x_size as Scalar - 1.0), y_size as Scalar - 1.0));
         assert!((u - (l + (r - l) * (x_size as Scalar - 0.5) / x_size as Scalar)).abs() < 1e-10);
         assert!((v - (t + (b - t) * (y_size as Scalar - 0.5) / y_size as Scalar)).abs() < 1e-10);
     }

@@ -151,12 +151,13 @@ struct Options {
     scene: String,
     single_pixel: Option<(u32, u32)>,
     threads: usize,
+    samples_per_pixel: usize,
 }
 
 impl Options {
     fn from_args(args: &[String]) -> Self {
-        let mut render_width = 4000;
-        let mut render_height = 4000;
+        let mut render_width = 720;
+        let mut render_height = 720;
         let mut display_width = 720;
         let mut display_height = 720;
         let mut camera_distance = 5.0;
@@ -170,6 +171,7 @@ impl Options {
         let mut scene = "mirror_ball".to_string();
         let mut single_pixel = None;
         let mut threads = 8;
+        let mut samples_per_pixel = 32;
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
@@ -253,6 +255,14 @@ impl Options {
                         i += 1;
                     }
                 }
+                "--samples" => {
+                    if i + 1 < args.len() {
+                        if let Ok(val) = args[i + 1].parse::<usize>() {
+                            samples_per_pixel = val.max(1);
+                        }
+                        i += 1;
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -273,6 +283,7 @@ impl Options {
             scene,
             single_pixel,
             threads,
+            samples_per_pixel,
         }
     }
 }
@@ -314,7 +325,13 @@ fn main() {
     );
     let max_depth = options.max_depth.unwrap_or(5);
     let start = Instant::now();
-    let frame = render(&camera, &scene, max_depth, options.threads);
+    let frame = render(
+        &camera,
+        &scene,
+        max_depth,
+        options.threads,
+        options.samples_per_pixel,
+    );
     let duration = start.elapsed();
     debug_println!("Render took {:.2?}", duration);
 
