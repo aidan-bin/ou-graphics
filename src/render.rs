@@ -5,9 +5,9 @@ use crate::types::linalg::*;
 use crate::verbose_println;
 
 /// Small positive bias to avoid surface self-intersection artifacts
-pub const RAY_BIAS: Scalar = 0.000001;
+pub const RAY_BIAS_BASE: Scalar = 0.001;
 // Search window limits for ray intersections
-pub const MIN_SEARCH: Scalar = RAY_BIAS;
+pub const MIN_SEARCH: Scalar = RAY_BIAS_BASE;
 pub const MAX_SEARCH: Scalar = Scalar::INFINITY;
 
 /// Parametric ray
@@ -191,6 +191,11 @@ pub trait Render {
     fn hit(&self, ray: Ray, search_interval: (Scalar, Scalar), hit_rec: &mut HitRecord) -> bool;
 }
 
+/// Calculates adaptive bias to prevent ray self-intersection
+fn calculate_ray_bias(intersection_distance: Scalar) -> Scalar {
+    RAY_BIAS_BASE * (1.0 + intersection_distance * 0.01)
+}
+
 /// Gets the color seen by a ray in a scene
 fn raycolor(
     scene: &Scene,
@@ -238,12 +243,12 @@ fn raycolor(
             }
 
             let shadow_ray = Ray {
-                position: p_intersect + hit_rec.normal * RAY_BIAS,
+                position: p_intersect + hit_rec.normal * calculate_ray_bias(hit_rec.t),
                 direction: light_direction_normalized,
             };
 
             // Check if point is shadowed from this light
-            let shadow_interval = (RAY_BIAS, light_distance - RAY_BIAS);
+            let shadow_interval = (RAY_BIAS_BASE, light_distance - RAY_BIAS_BASE);
             if !scene.hit(shadow_ray, shadow_interval, &mut shadow_rec) {
                 verbose_println!("Point is NOT in shadow relative to this light, shading...");
 
@@ -269,7 +274,7 @@ fn raycolor(
         // Get mirror reflection contribution
         if material.mirror_color != Color::BLACK {
             let reflect_ray = Ray {
-                position: p_intersect + hit_rec.normal * RAY_BIAS,
+                position: p_intersect + hit_rec.normal * calculate_ray_bias(hit_rec.t),
                 direction: ray.direction
                     - hit_rec.normal * hit_rec.normal.dot(&ray.direction) * 2.0,
             };
