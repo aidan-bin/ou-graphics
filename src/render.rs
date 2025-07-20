@@ -3,6 +3,7 @@ use crate::primitives::*;
 use crate::types::image::*;
 use crate::types::linalg::*;
 use crate::verbose_println;
+use std::sync::Arc;
 
 /// Small positive bias to avoid surface self-intersection artifacts
 pub const RAY_BIAS_BASE: Scalar = 0.001;
@@ -325,77 +326,188 @@ fn shade_pixel(
     Pixel(color)
 }
 
-/// Renders a range of rows for the image, returning a vector of (row index, pixel row)
-fn render_rows(
+/// Configuration for rendering operations
+#[derive(Clone)]
+pub struct RenderConfig {
+    pub camera: Camera,
+    pub scene: Scene,
+    pub max_depth: usize,
+    pub num_threads: usize,
+    pub samples_per_pixel: usize,
+    pub cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub progress_callback: Option<Arc<dyn Fn(f32) + Send + Sync>>,
+}
+
+impl RenderConfig {
+    /// Creates a new render configuration
+    pub fn new(
+        camera: Camera,
+        scene: Scene,
+        max_depth: usize,
+        num_threads: usize,
+        samples_per_pixel: usize,
+    ) -> Self {
+        Self {
+            camera,
+            scene,
+            max_depth,
+            num_threads,
+            samples_per_pixel,
+            cancel_flag: None,
+            progress_callback: None,
+        }
+    }
+
+    /// Creates a basic render configuration from camera and scene
+    pub fn basic(camera: Camera, scene: Scene) -> Self {
+        Self::new(camera, scene, 3, 8, 4)
+    }
+
+    /// Sets the maximum recursion depth for reflections
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
+    /// Sets the number of threads to use for rendering
+    pub fn with_threads(mut self, num_threads: usize) -> Self {
+        self.num_threads = num_threads;
+        self
+    }
+
+    /// Sets the number of samples per pixel for anti-aliasing
+    pub fn with_samples_per_pixel(mut self, samples_per_pixel: usize) -> Self {
+        self.samples_per_pixel = samples_per_pixel;
+        self
+    }
+
+    /// Adds cancellation support to the render configuration
+    pub fn with_cancellation(mut self, cancel_flag: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.cancel_flag = Some(cancel_flag);
+        self
+    }
+
+    /// Adds progress callback to the render configuration
+    pub fn with_progress_callback(
+        mut self,
+        callback: impl Fn(f32) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress_callback = Some(Arc::new(callback));
+        self
+    }
+
+    /// Renders the image using this configuration
+    pub fn render(self) -> Image {
+        render(self)
+    }
+}
+
+/// Internal configuration for rendering rows
+struct RowRenderConfig {
     camera: Camera,
     scene: Scene,
     max_depth: usize,
     width: usize,
-    row_range: std::ops::Range<usize>,
     samples_per_pixel: usize,
+    cancel_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+    progress_callback: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+}
+
+/// Renders a range of rows for the image, returning a vector of (row index, pixel row)
+fn render_rows(
+    config: RowRenderConfig,
+    row_range: std::ops::Range<usize>,
 ) -> Vec<(usize, Vec<Pixel>)> {
     let mut rows = Vec::new();
     let mut rng = rand::thread_rng();
     for y in row_range {
-        let mut row = Vec::with_capacity(width);
-        for x in 0..width {
+        if let Some(ref flag) = config.cancel_flag {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                verbose_println!("Render cancelled at row {y}");
+                break;
+            }
+        }
+
+        let mut row = Vec::with_capacity(config.width);
+        for x in 0..config.width {
             row.push(shade_pixel(
                 x,
                 y,
-                &camera,
-                &scene,
-                max_depth,
-                samples_per_pixel,
+                &config.camera,
+                &config.scene,
+                config.max_depth,
+                config.samples_per_pixel,
                 &mut rng,
             ));
         }
         rows.push((y, row));
+
+        if let Some(ref callback) = config.progress_callback {
+            callback(1);
+        }
     }
     rows
 }
 
-/// Renders an image from a camera and scene, optionally using multiple threads
-/// Note: If `num_threads` > 1, rendering is divided into bands of rows, each processed in a separate thread
-pub fn render(
-    camera: &Camera,
-    scene: &Scene,
-    max_depth: usize,
-    num_threads: usize,
-    samples_per_pixel: usize,
-) -> Image {
-    let (width, height) = camera.resolution;
+/// Renders an image using the provided configuration
+pub fn render(config: RenderConfig) -> Image {
+    let (width, height) = config.camera.resolution;
     let mut frame = Image::new(width, height);
-    if num_threads <= 1 {
-        for (y, row) in render_rows(
-            *camera,
-            scene.clone(),
-            max_depth,
+
+    let total_rows = height;
+    let completed_rows = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let row_progress_callback = if let Some(callback) = &config.progress_callback {
+        let completed_rows = completed_rows.clone();
+        let callback = callback.clone();
+        Some(Arc::new(move |rows_completed: usize| {
+            let total_completed = completed_rows
+                .fetch_add(rows_completed, std::sync::atomic::Ordering::Relaxed)
+                + rows_completed;
+            let progress = total_completed as f32 / total_rows as f32;
+            callback(progress.min(1.0));
+        }) as Arc<dyn Fn(usize) + Send + Sync>)
+    } else {
+        None
+    };
+
+    if config.num_threads <= 1 {
+        let row_config = RowRenderConfig {
+            camera: config.camera,
+            scene: config.scene.clone(),
+            max_depth: config.max_depth,
             width,
-            0..height,
-            samples_per_pixel,
-        ) {
+            samples_per_pixel: config.samples_per_pixel,
+            cancel_flag: config.cancel_flag.clone(),
+            progress_callback: row_progress_callback,
+        };
+        for (y, row) in render_rows(row_config, 0..height) {
             for (x, pixel) in row.into_iter().enumerate() {
                 frame[[x, y]] = pixel;
             }
         }
     } else {
-        #[allow(clippy::manual_div_ceil)]
-        let rows_per_thread = (height + num_threads - 1) / num_threads;
+        let rows_per_thread = height.div_ceil(config.num_threads);
         let mut handles = Vec::new();
-        for thread_id in 0..num_threads {
+        for thread_id in 0..config.num_threads {
             let start_row = thread_id * rows_per_thread;
             let end_row = ((thread_id + 1) * rows_per_thread).min(height);
-            let camera = *camera;
-            let scene = scene.clone();
+            let camera = config.camera;
+            let scene = config.scene.clone();
+            let cancel_flag = config.cancel_flag.clone();
+            let row_progress_callback = row_progress_callback.clone();
+            let max_depth = config.max_depth;
+            let samples_per_pixel = config.samples_per_pixel;
             let handle = std::thread::spawn(move || {
-                render_rows(
+                let row_config = RowRenderConfig {
                     camera,
                     scene,
                     max_depth,
                     width,
-                    start_row..end_row,
                     samples_per_pixel,
-                )
+                    cancel_flag,
+                    progress_callback: row_progress_callback,
+                };
+                render_rows(row_config, start_row..end_row)
             });
             handles.push(handle);
         }
@@ -471,6 +583,7 @@ mod tests {
             mirror_color: green,
         };
         let sphere = Sphere {
+            id: 0,
             center: Vector3(0.0, 0.0, 0.0),
             radius: 4.0,
             material,

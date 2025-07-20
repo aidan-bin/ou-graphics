@@ -7,3 +7,9 @@ edition = "2018"
 image = "0.25.6"
 open = "5.0"
 rand = "0.8"
+eframe = "0.28"
+egui = "0.28"
+
+[[bin]]
+name = "gui"
+path = "src/gui_main.rs"

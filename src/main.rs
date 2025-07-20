@@ -101,7 +101,7 @@ fn mirror_ball_scene() -> Scene {
         Sphere::new(Vector3(2.0, 1.5, -0.5), 0.5, Material::shiny(Color::RED)),
         Sphere::new(Vector3(-2.0, -2.0, -0.7), 0.3, Material::shiny(Color::BLUE)),
         Sphere::new(Vector3(1.5, -1.5, -0.8), 0.2, Material::shiny(Color::GREEN)),
-        Sphere::new(Vector3(0.8, 2.0, -0.9), 0.3, Material::shiny(Color::CYAN)),
+        Sphere::new(Vector3(0.8, 2.0, -0.7), 0.3, Material::shiny(Color::CYAN)),
         Sphere::new(
             Vector3(-1.2, 1.2, -0.6),
             0.4,
@@ -325,13 +325,14 @@ fn main() {
     );
     let max_depth = options.max_depth.unwrap_or(5);
     let start = Instant::now();
-    let frame = render(
-        &camera,
-        &scene,
+    let config = RenderConfig::new(
+        camera,
+        scene,
         max_depth,
         options.threads,
         options.samples_per_pixel,
     );
+    let frame = render(config);
     let duration = start.elapsed();
     debug_println!("Render took {:.2?}", duration);
 
